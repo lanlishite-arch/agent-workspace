@@ -1,0 +1,101 @@
+diff --git a/apps/api/src/middleware/auth.js b/apps/api/src/middleware/auth.js
+--- a/apps/api/src/middleware/auth.js
++++ b/apps/api/src/middleware/auth.js
+@@
+ export function authMiddleware(req, res, next) {
+   const authHeader = req.headers.authorization;
+   if (!authHeader?.startsWith("Bearer ")) {
+     return fail(res, "Unauthorized", 401);
+   }
+@@
+     return fail(res, "Invalid token", 401);
+   }
+ }
++
++export function requireRole(...roles) {
++  return (req, res, next) => {
++    if (!req.user || !roles.includes(req.user.role)) {
++      return fail(res, "Forbidden", 403);
++    }
++
++    return next();
++  };
++}
+diff --git a/apps/api/src/routes/adminRoutes.js b/apps/api/src/routes/adminRoutes.js
+--- a/apps/api/src/routes/adminRoutes.js
++++ b/apps/api/src/routes/adminRoutes.js
+@@
+ import { Router } from "express";
+ import { metrics } from "../controllers/adminController.js";
+-import { authMiddleware } from "../middleware/auth.js";
++import { authMiddleware, requireRole } from "../middleware/auth.js";
+ 
+ export const adminRoutes = Router();
+ 
+ adminRoutes.use(authMiddleware);
++adminRoutes.use(requireRole("admin"));
+ adminRoutes.get("/metrics", metrics);
+diff --git a/apps/api/src/tests/auth-role.test.js b/apps/api/src/tests/auth-role.test.js
+new file mode 100644
+--- /dev/null
++++ b/apps/api/src/tests/auth-role.test.js
+@@
++import test from "node:test";
++import assert from "node:assert/strict";
++import { requireRole } from "../middleware/auth.js";
++
++function createResponse() {
++  const state = { status: null, body: null };
++
++  return {
++    state,
++    status(code) {
++      state.status = code;
++      return this;
++    },
++    json(body) {
++      state.body = body;
++      return this;
++    }
++  };
++}
++
++test("requireRole allows configured roles", () => {
++  const req = { user: { role: "admin" } };
++  const res = createResponse();
++  let nextCalled = false;
++
++  requireRole("admin")(req, res, () => {
++    nextCalled = true;
++  });
++
++  assert.equal(nextCalled, true);
++  assert.equal(res.state.status, null);
++});
++
++test("requireRole rejects other authenticated roles", () => {
++  const req = { user: { role: "client" } };
++  const res = createResponse();
++  let nextCalled = false;
++
++  requireRole("admin")(req, res, () => {
++    nextCalled = true;
++  });
++
++  assert.equal(nextCalled, false);
++  assert.equal(res.state.status, 403);
++  assert.deepEqual(res.state.body, { success: false, message: "Forbidden" });
++});
++
++test("requireRole rejects requests without an authenticated user", () => {
++  const req = {};
++  const res = createResponse();
++  let nextCalled = false;
++
++  requireRole("admin")(req, res, () => {
++    nextCalled = true;
++  });
++
++  assert.equal(nextCalled, false);
++  assert.equal(res.state.status, 403);
++});
